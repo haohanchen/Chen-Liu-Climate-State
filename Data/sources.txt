@@ -1,0 +1,8 @@
+Socioeconomics (economics, some in PRIO): http://sedac.ciesin.columbia.edu/data/sets/browse
+Nightlight, forest, population etc.: http://grid.prio.org/#/
+Conflict: http://ucdp.uu.se/downloads/
+Presence of mosquitos: http://europepmc.org/articles/pmc5558104
+Malaria cases and deaths by country: http://www.who.int/malaria/publications/world-malaria-report-2017/en/
+Meteorological data, GLDAS: https://disc.sci.gsfc.nasa.gov/datasets/GLDAS_NOAH025_M_V2.1/summary?keywords=GLDAS
+Vegetation index, NDVI: https://lpdaac.usgs.gov/dataset_discovery/modis/modis_products_table/myd13c2_v006
+Global surface water: https://global-surface-water.appspot.com/download

@@ -1,0 +1,86 @@
+---
+title: "Report_appendix"
+author: "Yanlan Liu, Haohan Chen"
+date: "April 29, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(sp)
+library(countrycode)
+library(ggplot2)
+library(geoR)
+library(dplyr)
+library(fields)
+```
+
+## R Markdown
+
+testing
+
+```{r cars}
+# Mosquito occurrence distribution, 2010
+load("../Data/d_grid.Rdata")
+subset <- d_grid[d_grid$year==2010,]
+p <- ggplot(subset)+geom_point(aes(x=lon,y=lat,color=mos_one))+theme_bw()
+p
+```
+
+```{r}
+# empirical variogram of mosquito occurrence in the entire area, western Africa and eastern Africa, respectively
+df <- subset[which(!is.na(subset$mos_one)),c("lat","lon","mos_one")]
+coords = df %>% select(lat,lon) %>% as.matrix()
+d = rdist(coords)
+max.dist = max(d)
+bins <- 30
+vario <- variog(coords=coords,data=df$mos_one,uvec=(seq(0,max.dist,length=bins)))
+plot(vario,xlim=c(0,max.dist))
+
+dfwest <- df[(df$lat>=0) & (df$lat<15) & (df$lon>=0) & (df$lat<15),]
+coords = dfwest %>% select(lat,lon) %>% as.matrix()
+d = rdist(coords)
+max.dist = max(d)
+bins <- 30
+vario <- variog(coords=coords,data=dfwest$mos_one,uvec=(seq(0,max.dist,length=bins)))
+plot(vario,xlim=c(0,max.dist))
+
+dfeast <- df[(df$lat>=-10) & (df$lat<5) & (df$lon>=25) & (df$lat<40),]
+coords = dfeast %>% select(lat,lon) %>% as.matrix()
+d = rdist(coords)
+max.dist = max(d)
+bins <- 30
+vario <- variog(coords=coords,data=dfeast$mos_one,uvec=(seq(0,max.dist,length=bins)))
+plot(vario,xlim=c(0,max.dist))
+
+```
+
+
+```{r}
+# predicted surface of mosquito occurrence (change sample size)
+n_samp = 200
+df <- subset[which(!is.na(subset$mos_one)),c("lat","lon","mos_one")]
+coords = df %>% select(lat,lon) %>% as.matrix()
+max_range = max(dist(coords)) / 4
+
+starting = list(phi = 3/10, sigma.sq = 5, tau.sq = 10)
+tuning = list("phi"=3, "sigma.sq"=0.1, "tau.sq"=0.1)
+priors = list(beta.Norm = list(0, 100), 
+  phi.Unif = c(3/max_range, 3/(0.25)), 
+  sigma.sq.IG = c(2, 2), 
+  tau.sq.IG = c(2, 2))
+  
+# m = spLM(mos_one ~ 1, data = df, coords = coords, starting = starting, priors = priors, cov.model = "exponential", n.samples = n_samp, tuning = tuning,n.report = n_samp/2)
+# m = spLM(mos_one ~ 1, data = df, coords = coords, starting = starting, priors = priors, cov.model = "matern", n.samples = n_samp, tuning = tuning,n.report = n_samp/2)
+mr = spRecover(m, start=n_samp/2+1)
+plot(mr$p.theta.recover.samples)
+
+pred_coords = subset %>% select(lat,lon) %>% as.matrix()
+mp = spPredict(m, pred_coords, pred.covars = matrix(1, nrow=nrow(pred_coords)), 
+          start=n_samp/2+1)
+
+subset$mos_prd <- apply(t(mp$p.y.predictive.samples),2,mean)
+p <- ggplot(subset)+geom_point(aes(x=lon,y=lat,color=mos_prd))+theme_bw()
+p
+
+```
