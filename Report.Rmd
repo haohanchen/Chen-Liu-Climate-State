@@ -1,0 +1,444 @@
+---
+title: "Climate, Governance, and Disease"
+subtitle: "Environmental and Institutional Determinants of Malaria Spread in Africa"
+author: 
+- Haohan Chen (Political Science Department, Duke University)
+- Yanlan Liu (Nicholas School of the Environment, Duke University)
+date: "May 2, 2018"
+header-includes:
+   - \usepackage{amsmath}
+output: 
+  html_document:
+    self_contained: true
+    toc: true
+    number_sections: true
+bibliography: references.bib
+---
+
+```{r, include=FALSE}
+# Load libraries
+library(DiagrammeR)
+# library(DiagrammeRsvg)
+# library(rsvg)
+# library(svglite)
+library(dplyr)
+library(ggplot2)
+library(cowplot)
+theme_set(theme_classic())
+library(viridis)  # better colors for everyone
+library(ggthemes) # theme_map()
+library(spdep)
+library(sf)
+
+# Set chunk options
+knitr::opts_chunk$set(fig.align = "center", echo = FALSE, warning = FALSE, message = FALSE)
+
+# Load dataset
+load("Data/d_grid.Rdata")
+load("Data/d_areal_sf.Rdata")
+```
+
+# Introduction
+
+With crucial implications for public health and social development, the spatial-temporal variation of malaria infection and related mortality rates in central Africa have received growing attention. Previous studies investigated the correspondence of malaria with climate conditions, such as annual precipitation and daily maximum temperature. However, more detailed environmental conditions, such as vegetation density, dominant tree species, and surface water area, may affect the habitats and propagation of mosquitos, the major vector of malaria. In addition to these natural environmental conditions, societal control measures also play crucial roles in observed malaria rates. Such control measures can be closely related to the quality of governance and demographics. In this study, we investigate (1) the spatial-temporal patterns of reported malaria infection and mortality rates and (2) their relationships with environmental and socio-political variables. Malaria rate data came from a published dataset for countries in central Africa. Environmental variables were obtained from satellite remote sensing datasets and global land surface model outputs. Geo-coded socio-political variables were gathered from multiple sources. Spatial Gaussian process models were implemented, and informative variables were identified using the Bayesian information criterion.
+ 
+
+```{r, fig.width=4, fig.height=4}
+grViz("
+digraph boxes_and_circles {
+
+  # a 'graph' statement
+  graph [overlap = true, fontsize = 10]
+
+  # several 'node' statements
+  node [shape = box,
+        fontname = Helvetica]
+  Climate; Vegetation; Water; Governance; Demographics; Mosquitoes; 'Malaria Infection and Death'
+
+  # several 'edge' statements
+  Climate -> Vegetation
+  Climate -> Water
+  Climate -> Mosquitoes
+  Water -> Mosquitoes
+  Vegetation -> Mosquitoes
+  Demographics -> Mosquitoes
+  Demographics -> 'Malaria Infection and Death'
+  Governance -> Mosquitoes [label = 'Control']
+  Governance -> 'Malaria Infection and Death' [label = 'Medicate']
+  Mosquitoes -> 'Malaria Infection and Death' [label = 'Spread']
+}
+")# %>% export_svg %>% charToRaw %>% rsvg %>% png::writePNG("README_files/intro_Flowchart.png")
+
+# knitr::include_graphics("README_files/intro_Flowchart.png")
+```
+
+# Background
+
+**Climate and Vegetation** Vegetated ecosystems are vulnerable due to warming temperatures and increasing frequency and intensity of extreme ecosystem disturbances, such as droughts, storms, fires, and pest outbreaks @settele2014terrestrial. These climatological changes and perturbations may gradually alter plant physiological properties, including stomatal kinetics [@brodribb2009evolution,lammertsma2011global], physiological strategies [@scheiter2009impacts, hawkes2008soil], phenology [@garonna2016variability, buitenwerf2015three], and ecosystem productivity [@piao2008net, keenan2013increase, drake2016carbon]. They could also lead to a regime shift after reaching the tipping point [@scheffer2009early], with the new state exhibiting different dynamics, sensitivities to environmental conditions, and ecological services. The consequent changes in vegetated ecosystems have the potential to alter the terrestrial carbon sink strength and the local and global climate [@settele2014terrestrial], hence influencing ecological functions and human society. 
+
+As noted in the Fifth Assessment Report (AR5) of the Intergovernmental Panel on Climate Change (IPCC) [@settele2014terrestrial], “uncertainty in predicting the response of terrestrial and freshwater ecosystems to climate and other perturbations, particularly at the local scale, remains a major impediment to determining prudent levels of permissible change.” Given the multidimensional nature of climate–vegetation feedbacks, studies of the combined influence of multiple simultaneous factors are needed. Historical data provide opportunities to investigate empirical relations between environmental conditions and vegetation dynamics.
+
+**The Politics of Climate Change** The recent decade has seen the emergence of literature on the politics of climate change. Researchers have studied the topic from a variety of theoretical perspectives. Researchers on the politics of climate change policies, as reviewed in @Bernauer2013, attempt to understand four important research topics: (1) institutional designs that facilitate or hinder international cooperation on climate issues, (2) domestic factors that shape climate-related policymaking, (3) the role of civil society in climate change politics, and (4) the socio-political consequences of climate change. In comparison, the community of scholars studying conflict and war have attempted to understand how the climate and whether is related to explains and predicts war through different channels. 
+
+As reviewed in @Brown1990, a large stream of literature studies has been conducted on how climate affects the risk of both interpersonal and intergroup conflicts. Overall, the review article argued that contemporaneous temperature rises increase interpersonal conflict by 2.4% and intergroup conflict by 11.3%. However, the review cautions that the evidence thus far is mixed and that scholars face challenges conducting empirical studies due to issues with model specification. More generally, climate change is shown to have a social and economic impact. Recent *Science* and *Nature* articles used rich geo-coded data and existing research to show that temperature changes have an impact on health, economic productivity (agriculture, energy, trade), and demography (violence, migration, women’s welfare) [@Carleton2016; @Burke2015]. 
+
+Studies on the defining link between *climate* and *conflict* in *Africa* have been particularly well-received in recent years. As an earlier contribution to the literature, @Hendrix2012 and @Hsiang2013 found that rainfall variability has a statistically significant effect on instances of political conflict of various scales, as it can disrupt the economy and provoke social tension. @Loughlin2012 found that extremely warm weather increased the risk of conflict in Eastern Africa based on spatial-temporal data from 1990 to 2009. Beyond the regional trend, global warming is evidently associated with an increased risk of conflict, as a study found that El Niño–Southern Oscillation can explain 21% of the civil conflict since 1950 [@Hsiang2011]. 
+
+
+# Data
+
+In this section, we describe our data. We collected our data from a variety of repositories for environmental, demographic, and governance statistics. The first challenge we faced is that the variables in their respective original datasets were aggregated into geographic units of different sizes. With the objective of balancing computational tractability and measurement precision, we cleaned and merged two datasets: (1) a country-level areal dataset where each country-year has one observation and (2) a grid-year dataset with a spatial resolution of 0.5°. In the table below, we show an overview of the variables and their sources.
+
+
+```{r}
+tab <- rbind(
+  c("Climate", "Air temperature, air humidity, cumulative rainfall", "Global land data assimilation systems", "2010-2016", "Grid"),
+  c("Vegetation", "Normalized vegetation index", "MODIS remotely sensed vegetation indices from NASA ", "2010-2016", "Grid"),
+  c("Surface water", "Surface water area", "Global surface water data product", "2010-2016", "Grid"),
+  c("Governance", "Number of Organized Violence and Deaths it causes", "Upsala Conflict Data Program (UDCP)", "2010-2016", "Grid"),
+  c("Governance", "Nighttime Lights", "National Centers of Environmental Information", "2010-2012", "Grid"),
+  c("Demographics", "Total Population", "History Database of the Global Environment", "2005", "Grid"),
+  c("Malaria", "Presense of mosquito species in charge of malarea transmission", "Published dataset in literature (kyalo et al., 2017)", "2010-2016", "Country"),
+  c("Malaria", "Cases of Malaria diagnosed; Deaths by Malaria", "World Health Organization", "2010-2016", "Country")
+  
+)
+colnames(tab) <- c("Type", "Description", "Source", "Time Period", "Unit of Aggregation")
+
+knitr::kable(tab, caption = "Overview of Variables and Data Sources")
+```
+
+## Environmental Data
+
+```{r, fig.width=10, fig.height=8}
+fig1 = ggplot(subset(d_grid, year == 2010)) + geom_raster(aes(x = lon, y = lat, fill = NDVI_50), alpha = 1) + scale_fill_viridis() + coord_fixed(ratio = 1) + ggtitle("NDVI")
+
+fig2 = ggplot(subset(d_grid, year == 2010)) + geom_raster(aes(x = lon, y = lat, fill = Water_permanent), alpha = 1) + scale_fill_viridis() + coord_fixed(ratio = 1) + ggtitle("Surface water")
+
+fig3 = ggplot(subset(d_grid, year == 2010)) + geom_raster(aes(x = lon, y = lat, fill = Tair_mean), alpha = 1) + scale_fill_viridis() + coord_fixed(ratio = 1) + ggtitle("Tair")
+
+
+fig4 = ggplot(subset(d_grid, year == 2010)) + geom_raster(aes(x = lon, y = lat, fill = Rain_mean), alpha = 1) + scale_fill_viridis() + coord_fixed(ratio = 1) + ggtitle("Rain")
+
+plot_grid(fig1, fig2, fig3, fig4, ncol = 2)
+rm(fig1, fig2, fig3, fig4)
+
+```
+
+
+## Governance
+
+```{r, fig.width=10, fig.height=8}
+fig1 = ggplot(subset(d_grid, year == 2012)) + geom_raster(aes(x = lon, y = lat, fill = dist_to_capital), alpha = 1) + scale_fill_viridis() + coord_fixed(ratio = 1) + ggtitle("Distance to Capital City (2012)")
+
+fig2 = ggplot(subset(d_grid, year == 2012)) + geom_raster(aes(x = lon, y = lat, fill = log(nightlights)), alpha = 1) + scale_fill_viridis() + coord_fixed(ratio = 1) + ggtitle("Nighttime Lights (2012)")
+
+fig3 = d_grid %>% filter(year == 2012) %>% select(lon, lat, n_conflict) %>% mutate(n_conflict = replace(n_conflict, n_conflict == 0, NA)) %>% ggplot(.) + geom_raster(aes(x = lon, y = lat, fill = log(n_conflict)), alpha = 1) + scale_fill_viridis() + coord_fixed(ratio = 1) + ggtitle("Number of Conflicts (2012)")
+
+fig4 = d_grid %>% filter(year == 2012) %>% select(lon, lat, n_deaths) %>% mutate(n_conflict = replace(n_deaths, n_deaths == 0, NA)) %>% ggplot(.) + geom_raster(aes(x = lon, y = lat, fill = log(n_deaths)), alpha = 1) + scale_fill_viridis() + coord_fixed(ratio = 1) + ggtitle("Number of Deaths of Conflicts (2012)")
+
+plot_grid(fig1, fig2, fig3, fig4, ncol = 2)
+rm(fig1, fig2, fig3)
+```
+
+## Demographics
+
+```{r, fig.width=5, fig.height=4}
+ggplot(subset(d_grid, year == 2012)) + geom_raster(aes(x = lon, y = lat, fill = log(population+1)), alpha = 1) + scale_fill_viridis() + ggtitle("Polulation (2005)") + coord_fixed(ratio = 1)
+```
+
+## Mosquitoes
+
+```{r, fig.width=5, fig.height=4}
+ggplot(subset(d_grid, year == 2012)) + geom_raster(aes(x = lon, y = lat, fill = mos_one), alpha = 1) + scale_fill_viridis() + coord_fixed(ratio = 1) + ggtitle("Count of Studies Observing Mosquitoes (2012)")
+```
+
+## Malaria
+
+We obtained country-level measures of the severity of Malaria’s spread from 2010 to 2016. Below we plot the data of 2012 in the map. The map suggests spatial autocorrelation. This is tested in a later section.
+
+
+```{r, fig.width=10, fig.height=8}
+d <- d_areal_sf[["2012"]] %>% filter(!iso3c %in% c("MDG", "CPV", "COM")) 
+d$mal_mort <- d$mal_deaths /  d$mal_cases
+# ggplot(d) + geom_sf(aes(fill = mal_cases)) + ggtitle("Number of Malaria Cases")
+fig1 = ggplot(d) + geom_sf(aes(fill = mal_cases)) + ggtitle("Number of Malaria Cases") + scale_fill_viridis()
+fig2 = ggplot(d) + geom_sf(aes(fill = mal_cases_pc)) + ggtitle("Number of Malaria Cases Per Capita") + scale_fill_viridis()
+# DV: Malaria Death
+fig3 = ggplot(d) + geom_sf(aes(fill = mal_deaths)) + ggtitle("Number of Malaria Deaths") + scale_fill_viridis()
+fig4 = ggplot(d) + geom_sf(aes(fill = mal_deaths_pc)) + ggtitle("Number of Malaria Deaths Per Capita") + scale_fill_viridis()
+
+plot_grid(fig1, fig2, fig3, fig4, ncol = 2)
+rm(fig1, fig2, fig3, fig4)
+```
+
+## Data Cleaning and Imputation
+
+The environmental and socio-political variables have different spatial resolutions and temporal coverages. The environmental variables with finer spatial-temporal resolutions were all resampled to a 0.25° resolution and a monthly interval. Data of civil conflict with specific coordinates were assigned to the 0.25° grid they belong to, which were then aggregated together to obtain the total number of conflicts within each grid. The gridded population data extends to 2012. For the years after 2012, population was imputed as being equal to that of 2012, with the assumption that the population changed little over the following 4 years. A few coastal and island pixels have missing climate variables, which could be due to large fractions of sea surface in those pixels. These pixels were excluded from the dataset. The mosquito presence data was provided by @kyalo2017geo, the most recent and comprehensive dataset from a meta-analysis of the malaria vector in Africa. The dataset contains the year, location, and species of mosquitoes reported in previous literatures. The total mosquito population, regardless of species, was aggregated to each 0.25 grid. 
+ 
+
+# Point-Referenced Data
+
+## Exploratory Analysis
+
+In this section, the number and location of mosquito populations within a year is modeled. We first examine if spatial correlation exists in the point-referenced data. As suggested by the following variogram for each year, mosquito presence might be spatially correlated within ranges of around 1° for the years 2011 and 2013. The association appears unclear for other years.
+
+```{r,fig.width=8, fig.height=8}
+# Variograms of for each year -------------
+library(fields)
+library(geoR)
+library(ggpubr)
+
+gghandles <- list()
+for (yr in seq(2010,2015)){
+  subset <- d_grid[d_grid$year==yr,]
+  df <- subset[which(!is.na(subset$mos_one)),c("lat","lon","mos_one")]
+  coords <- as.matrix(df[,c("lat","lon")])
+  d <- rdist(coords)
+  max.dist <- 10
+  bins <- 50
+  vario <- variog(coords = coords,data = df$mos_one,
+                  uvec = (seq(0,max.dist,length=bins)),messages=FALSE)
+  gghandles[[as.character(yr)]] <- ggplot(data.frame(distance=vario$u,semivariance=vario$v)) + 
+  geom_point(aes(x = distance, y = semivariance)) + theme_bw()+
+  ggtitle(toString(yr))
+}
+
+ggarrange(gghandles[["2010"]],gghandles[["2011"]],gghandles[["2012"]],
+          gghandles[["2013"]],gghandles[["2014"]],gghandles[["2015"]],
+          # labels = c("(a)", "(b)","(c)","(d)","(e)","(f)"),hjust=0,vjust=1
+          font.label = list(size = 14, color = "black", face = "bold", family = NULL),
+          ncol = 2,nrow = 4,common.legend=TRUE,legend="none")
+
+```
+
+Moran's I was also computed for mosquito presence within each year, with the weight matrix consisting of the inverse of distance between each pair of points. Moran’s I ranged from 0.015 to 0.082 across the years, indicating the weak spatial association of mosquito presence. As such, normal generalized linear models were used without incorporating spatial dependence. 
+
+```{r}
+# Compute Moran's I for each year --------------
+
+normalize_weights = function(w) {
+  diag(w) = 0
+  rs = rowSums(w)
+  rs[rs == 0] = 1
+  w/rs
+}
+
+morans_I = function(y, w) {
+  w = normalize_weights(w)
+  # w[is.na(w)] = 0
+  n = length(y)
+  y_bar = mean(y)
+  num = sum(w * (y-y_bar) %*% t(y-y_bar))  
+  denom = sum( (y-y_bar)^2 )
+  (n/sum(w)) * (num/denom)
+}
+
+MI <- NULL
+for (yr in seq(2010,2015)){
+  subset <- d_grid[d_grid$year==yr,]
+  df <- subset[which(!is.na(subset$mos_one)),c("lat","lon","mos_one")]
+  coords <- as.matrix(df[,c("lat","lon")])
+  dist <- as.matrix(dist(coords))
+  dist.inv <- 1/dist
+  MI <- c(MI,morans_I(df$mos_one, dist.inv))
+}
+# print(MI) # to be put in a table
+```
+
+```{r, fig.width=3, fig.height=3}
+data.frame(year = 2010:2015, MI) %>%
+  ggplot(aes(x = year, y = MI)) + geom_point() + geom_linerange(ymin = 0, ymax = MI) + xlab("Year") + ylab("Moran's I") + ggtitle("Moran's I (2010-2015)")
+```
+
+
+## Model and Results
+The point-referenced counts of mosquito presence were modeled using a Poisson regression, weighted by population:
+
+$$
+\log \left( E(Y|X)\right) = \alpha + \beta’X
+$$
+
+where $Y$ is the mosquito count weighted by population and $X$, including predictors. As noted in the conceptual graph, mosquito presence can be affected by both environmental conditions such as surface water area, vegetation density, rainfall, air temperature, and humidity as well as sociological development, including population, distance to the capital, number of conflicts, and night light. These are included as candidate variables. All possible combinations of up to three candidate variables were used to fit the data for all years from 2010 to 2016. Models with the lowest Bayesian information criterion are listed below. 
+
+The results show that annual mean air temperature (Tair_mean) and its intra-annual variation (Tair_sd) were selected in the four models with the lowest BIC. This is consistent with previous studies highlighting the crucial roles of air temperature and its seasonality on mosquito quantities in Africa [@zhou2004association; @pascual2006malaria]. In addition, air humidity and the vegetation index also contributed to the estimation of mosquito presence. The densest vegetation (NDVI_90), rather than the average of vegetation density (NVDI_50), within a pixel was also identified as an informative predictor, possibly due to the fact that dense vegetation provides more favorable habitats for mosquitoes. Notably, population was positively correlated with mosquito presence, which might be a result of more data collection at locations with larger populations. Mosquito presence was also positively associated with lower social stability, indicated by the higher number of deaths from civil conflicts.
+
+As the values of BIC are close to each other, mosquito presence rates at locations without observation were predicted using the ten models with the lowest BIC via model averaging. That is, the predicted value by each of the ten models were averaged to obtain a surface of mosquito presence. This continuous estimation of mosquito presence rate within each year was then used as a variable to estimate malaria cases and deaths within each country.
+ 
+
+```{r}
+library(gtools)
+# List of models -----------
+predictors <- colnames(d_grid)[c(7:12,16:23)] # both sociological and environmental conditions
+# predictors <- colnames(d_grid)[c(16:23)] # environmental conditions
+mod <- as.list(predictors)
+tmp<-combinations(n=length(predictors),r=2,v=predictors,repeats.allowed=F)
+mod <- c(mod,paste(tmp[,1],tmp[,2],sep="+"))
+tmp<-combinations(n=length(predictors),r=3,v=predictors,repeats.allowed=F)
+mod <- c(mod,paste(tmp[,1],tmp[,2],tmp[,3],sep="+"))
+# tmp<-combinations(n=length(predictors),r=4,v=predictors,repeats.allowed=F)
+# mod <- c(mod,paste(tmp[,1],tmp[,2],tmp[,3],tmp[,4],sep="+"))
+
+
+# Linear model selection using data of all years---------------
+d_grid$offset <- log10(d_grid$population+1)
+d_known <- d_grid[!is.na(d_grid$mos_one),c("lat","lon","mos_one","year",c(predictors,"offset"))]
+d_unkown <- d_grid[is.na(d_grid$mos_one),c("lat","lon","mos_one","year",c(predictors,"offset"))]
+bic <- NULL
+
+for (mm in mod){
+  glm1 <- glm(paste("mos_one~",mm), weights = offset, family = "poisson", data = d_known)
+  bic <- c(bic,BIC(glm1))
+}
+modelbic <- data.frame(mid = seq(length(bic)),bic)
+
+# Top 10 best models and their BIC's, to be put in a table
+out_mod <- mod[modelbic$mid[order(modelbic$bic,decreasing = FALSE)]][1:10] # models
+out_mod2 <- data.frame("Rank" = as.character(1:10), Model = unlist(out_mod))
+knitr::kable(out_mod2)
+```
+
+```{r}
+# Model averageing the top 10 best models with the lowest bic
+mos_one_estimate <- NULL
+for (i in seq(10)){
+  fm <- formula(paste("mos_one~",mod[modelbic$mid[order(modelbic$bic,decreasing = FALSE)]][i]))
+  glm1 <- glm(fm, family = "poisson",weights = offset, data = d_known)
+  # print(glm1$coefficients)
+  tmp <- predict.glm(glm1,newdata = d_grid)
+  tmp[!(tmp>0)] <- 0
+  mos_one_estimate <- cbind(mos_one_estimate,tmp)
+}
+d_grid$mos_one_estimate <- apply(mos_one_estimate,1,mean)
+
+```
+
+
+# Areal Data Analysis
+
+In this section, we present the results of the spatial patterns of malaria spread in Africa. As discussed in Section 3, data on malaria infection and deaths were only available at the country level from 2010 to 2016. We took the subset of 2012 statistics, as this was the latest year for which socio-political variables were available. This section is organized as follows. We first present the results of our exploratory analysis, where we tested the spatial correlation using different versions of operationalization. In the second part, we chose an outcome, the number of malaria cases diagnosed, and fit a variety of models to predict it. We started with a set of linear models and then attempted hierarchical models to account for the nature of the outcome as a count variable.
+
+
+## Exploratory Analysis
+
+We explored the spatial correlations of four outcome variables of interest regarding the severity of Malaria in African countries: the number of cases, number of cases per capita (cases/population), number of deaths, number of deaths per capita, and mortality rate. As is shown in the table below, all outcome variables showed significant *positive* spatial autocorrelations. We set the value of the weight matrix to binary (whether two countries share a border). We used this simple measure instead of distance because countries are large and transportation in many areas of Africa is not well advanced. Thus, we assumed the contagion of the disease travels very far. In particular, the *number of cases diagnosed* had the strongest spatial correlation. Thus, we chose the number of cases as our main outcome variable of interest.
+
+
+```{r}
+d <- d_areal_sf[["2012"]] %>% filter(!iso3c %in% c("MDG", "CPV", "COM"))
+d$mal_mort <- d$mal_deaths /  d$mal_cases
+
+W <- st_touches(d, sparse = F)
+listW <- mat2listw(W)
+
+# Examining Spatial Correlation
+
+tab_test <- cbind.data.frame(
+  c(
+    "Number of Cases",
+    "Number of Cases Per Capita",
+    "Number of Deaths",
+    "Number of Deaths Per Capita",
+    "Mortality Rate (Deaths/Cases)"
+  ),
+  c(
+    moran.test(d$mal_cases, listW)$estimate[1],
+    moran.test(d$mal_cases_pc, listW)$estimate[1],
+    moran.test(d$mal_deaths, listW)$estimate[1],
+    moran.test(d$mal_deaths_pc, listW)$estimate[1],
+    moran.test(d$mal_mort, listW)$estimate[1]
+  ),
+  c(
+    geary.test(d$mal_deaths, listW)$estimate[1],
+    geary.test(d$mal_deaths_pc, listW)$estimate[1],
+    geary.test(d$mal_cases, listW)$estimate[1],
+    geary.test(d$mal_cases_pc, listW)$estimate[1],
+    geary.test(d$mal_mort, listW)$estimate[1]
+  )
+)
+colnames(tab_test) = c("Outcome Variable (Measures of Malaria Severity)", "Moran's I", "Geary's C")
+
+knitr::kable(tab_test, digits = 2, caption = "Test Statistics of Spatial Autocorrelation")
+
+```
+
+## Analysis
+
+We fit a linear conditional autoregressive (CAR) model to predict the number of malaria cases. We determined the logarithm of the outcome so that the data fit the linear model:
+
+\begin{gather*}
+  \mathbf{y} \sim N(\mathbf{X}\beta, \Sigma_{CAR}) \\
+  \Sigma_{CAR} = \sigma^2(\mathbf{D} - \phi \mathbf{W})^{-1}
+\end{gather*}
+
+**No Predictors** We started with a CAR model without predictors, which showed poor predictive power. Below, we show a comparison of the actual distribution of malaria cases and the fitted values. As the figure shows, the prediction of the number of cases is off for many of the countries; it only captures the high malaria risk in two central African countries (the countries colored yellow and light blue). Thus, spatial autocorrelation is unable to explain the variation in malaria outbreak. We next fit models with the set of predictors we considered important, as introduced in previous sections.
+
+
+```{r}
+areal_lm1 <- spautolm(formula = log(mal_cases) ~ 1, data = d, listw = listW, family = "CAR")
+
+d$fitted <- areal_lm1$fit$fitted.values
+d$resid <- areal_lm1$fit$residuals
+
+fig1 = ggplot(d) + geom_sf(aes(fill = mal_cases)) + ggtitle("Num Malaria Cases (Actual)") + scale_fill_viridis()
+fig2 = ggplot(d) + geom_sf(aes(fill = exp(fitted)))+ ggtitle("Num Malaria Cases (Fitted)") + scale_fill_viridis()
+
+plot_grid(fig1, fig2, ncol = 2)
+```
+
+**Adding Predictors of Demographics, Governance, and Environment** We used a set of predictors to improve the model. After model selection, we chose the model with the best performance (i.e., highest log-likelihood and lowest AIC). The model includes three variables: mean nighttime lights, number of observed mosquitoes, and air humidity. We plotted the size of the coefficients of the scaled variables below. The results showed that nighttime light was negatively associated with the number of malaria cases. This is in line with our theoretical prediction, as higher nighttime illumination is associated with better governance quality, which indicates that it can also be capable of controlling diseases. On the other hand, air humidity was positively associated with the number of malaria cases, because a higher humidity facilitates propagation of mosquitoes and provides more favorable habitats for mosquitoes. However, we found the counterintuitive result that the number of mosquitoes observed had no correlation with malaria risk (which is also the case across all other models tested). We debated the reasons for this, which are discussed in the Conclusion.
+
+```{r}
+# areal_lm2 <- spautolm(formula = log(mal_cases) ~ log(population), data = d, listw = listW, family = "CAR")
+# 
+# areal_lm3 <- spautolm(formula = log(mal_cases) ~ log(population) + mos_one_est_sum, data = d, listw = listW, family = "CAR")
+# 
+# areal_lm4 <- spautolm(formula = log(mal_cases) ~ log(population) + mos_one_est_sum + nightlights_mean, data = d, listw = listW, family = "CAR")
+# 
+# # areal_lm4.1 <- spautolm(formula = log(mal_cases) ~ log(population) + mos_one_est_sum + conflict_n_sum, data = d, listw = listW, family = "CAR")
+# # summary(areal_lm4.1)
+
+areal_lm5 <- spautolm(formula = log(mal_cases) ~ log(population) + scale(mos_one_est_sum) + scale(nightlights_mean) + scale(Qair_mean_mean), data = d, listw = listW, family = "CAR")
+
+beta_sim <- MASS::mvrnorm(5000, areal_lm5$fit$coefficients, areal_lm5$fit$imat) %>% apply(., 2, function(x) quantile(x, c(0.025, 0.5, 0.975))) %>% t(.) %>% as.data.frame(.)
+beta_sim <- beta_sim[-1, ]
+beta_sim$coef <- c("Population", "Mosquitoes", "Nightlights", "Air Humidity")
+
+# areal_lm6 <- spautolm(formula = log(mal_cases) ~ log(population) + mos_one_est_sum + nightlights_mean + NDVI_50_mean, data = d, listw = listW, family = "CAR")
+# 
+# areal_lm7 <- spautolm(formula = log(mal_cases) ~ log(population) + mos_one_est_sum + nightlights_mean + scale(Water_permanent_sum), data = d, listw = listW, family = "CAR")
+# 
+# areal_lm8 <- spautolm(formula = log(mal_cases) ~ log(population) + mos_one_est_sum + nightlights_mean + scale(Water_temporary_sum), data = d, listw = listW, family = "CAR")
+# 
+# areal_lm9 <- spautolm(formula = log(mal_cases) ~ log(population) + mos_one_est_sum + nightlights_mean + Qair_mean_mean + NDVI_50_mean + scale(Water_temporary_sum), data = d, listw = listW, family = "CAR")
+
+```
+
+```{r, fig.width=5, fig.height=4}
+ggplot(beta_sim, aes(x = coef, y = `50%`)) + geom_point() + geom_linerange(aes(ymin = `2.5%`, ymax = `97.5%`)) + geom_hline(yintercept = 0, lty = 2, color = "red") + coord_flip() + ylab("Coefficient") + ggtitle("Coefficient Plots (95% CI)") + theme_bw()
+```
+
+The best model for governance and environmental predictors showed improved predictive power. As shown in the graph below, the fitted value better captures the variation of malaria cases.
+
+```{r}
+d$fitted5 <- areal_lm5$fit$fitted.values
+d$resid5 <- areal_lm5$fit$residuals
+
+fig1 = ggplot(d) + geom_sf(aes(fill = mal_cases)) + ggtitle("Num Malaria Cases (Actual)") + scale_fill_viridis()
+fig2 = ggplot(d) + geom_sf(aes(fill = exp(fitted5)))+ ggtitle("Num Malaria Cases (Fitted)") + scale_fill_viridis()
+
+plot_grid(fig1, fig2, ncol = 2)
+```
+
+
+# Conclusion
+
+Large spatial variation in malaria cases and deaths exists in different African countries. For example, based on the data from 2012, the countries with a high number of malaria cases and deaths were mostly concentrated in Eastern Africa and several countries in Western Africa; the number of malaria deaths was the highest in Central Africa. In this study, we examined the spatial connection in point-referenced data of malaria-related mosquito presence and areal data of malaria cases and deaths by country. We found that mosquito presence exhibited little spatial connection, whereas malaria cases and deaths by country had clear spatial structures. Among all the considered environmental and sociological variables, air temperature was robustly identified to be positively related with the mosquito population. Other variables, including air humidity, vegetation density, and population, also contributed to spatial variation in mosquito presence. Across countries, denser vegetation, higher air humidity, and higher rainfall amounts were associated with higher malaria cases. Notably, higher values of night light were negatively associated with malaria cases, which indicates that higher quality of governance may help control the number of malaria cases. 
+
+One interesting issue arising from our analysis is that spatial correlation was not related to mosquito population, which is the major vector of malaria transmission. However, malaria cases exhibited clear spatial association. This is contradictory to our initial hypothesis that neighboring countries may share similar numbers of malaria cases due to transmission vectors of mosquitoes. One possible reason could be uncertainty in the mosquito dataset. As the mosquito dataset comes from meta-analyses, the choice of locations for mosquito research may not be random, hence undermining the representativeness of the spatial structure of mosquito presence. Hence, the mosquito presence data used here may not serve well as an intermediate variable connecting environmental conditions and malaria. 
+
+Further studies should include more detailed investigation of the influence of environmental and socio-political variables on malaria cases, deaths, and mortality rates. A predictive model may be established and serve as a tool to predict future malaria outbreaks using projected climate conditions, possible sociological changes, and policies.
+
+
+
+# References
+
